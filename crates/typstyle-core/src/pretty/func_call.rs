@@ -1,6 +1,7 @@
 //! Conversion of function calls and their argument lists.
 
 use itertools::Itertools;
+use rustc_hash::FxHashSet;
 use typst_syntax::{SyntaxKind, SyntaxNode, ast::*};
 
 use super::{
@@ -14,6 +15,7 @@ use super::{
     prelude::*,
     style::FoldStyle,
     table,
+    util::is_comment_node,
 };
 use crate::{ext::StrExt, pretty::args};
 
@@ -203,6 +205,19 @@ impl<'a> PrettyPrinter<'a> {
             }
         };
 
+        // A semicolon written right after `#`-prefixed code ends that code
+        // rather than the row, so no space may be put between them.
+        let attached_semicolons: FxHashSet<*const SyntaxNode> = children
+            .as_slice()
+            .windows(2)
+            .filter(|pair| {
+                pair[1].kind() == SyntaxKind::Semicolon
+                    && !matches!(pair[0].kind(), SyntaxKind::Space)
+                    && !is_comment_node(&pair[0])
+            })
+            .map(|pair| &pair[1] as *const SyntaxNode)
+            .collect();
+
         let mut peek_hash = false;
         let mut peek_arg = false;
         let mut peek_hashed_arg = false;
@@ -217,7 +232,10 @@ impl<'a> PrettyPrinter<'a> {
             peek_linebreak = false;
             match child.kind() {
                 SyntaxKind::Comma => FlowItem::tight_spaced(self.arena.text(",")),
-                SyntaxKind::Semicolon => FlowItem::new(self.arena.text(";"), at_hashed_arg, true),
+                SyntaxKind::Semicolon => {
+                    let attached = attached_semicolons.contains(&(child as *const SyntaxNode));
+                    FlowItem::new(self.arena.text(";"), at_hashed_arg && !attached, true)
+                }
                 SyntaxKind::Space => {
                     peek_hash = at_hash;
                     peek_hashed_arg = at_hashed_arg || at_arg;
